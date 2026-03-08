@@ -483,3 +483,4 @@ See [`docs/architecture.md`](docs/architecture.md) for:
 Built as a cloud engineering portfolio project demonstrating production-level AWS + Kubernetes skills.
 
 **Skills demonstrated:** Terraform IaC · Amazon EKS · RDS Multi-AZ · S3 · IAM/IRSA · Kubernetes (Deployments/HPA/Ingress) · Prometheus/Grafana · GitHub Actions CI/CD · Docker · AWS Load Balancer Controller
+# Deployment verified Sun, Mar  8, 2026  9:12:13 PM
