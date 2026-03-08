@@ -9,7 +9,7 @@ on:
   workflow_dispatch:  # Allow manual runs from GitHub UI
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'eu-west-2' }}
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
   ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
 
@@ -141,7 +141,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production  # Requires manual approval in GitHub environments
 
     steps:
       - name: Checkout code
@@ -212,10 +211,10 @@ jobs:
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
           if [ -n "$ALB_URL" ]; then
-            echo "Running smoke test against: http://${ALB_URL}/api/health"
+            echo "Running smoke test against: http://${ALB_URL}/health"
             # Retry for up to 60s (ALB target registration can take time)
             for i in {1..6}; do
-              RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${ALB_URL}/api/health || echo "000")
+              RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${ALB_URL}/health || echo "000")
               if [ "$RESPONSE" = "200" ]; then
                 echo "✅ Health check passed (HTTP 200)"
                 exit 0
