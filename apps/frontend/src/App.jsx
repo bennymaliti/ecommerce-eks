@@ -22,7 +22,7 @@ function App() {
 
   return (
     <div style={{ fontFamily: 'Arial, sans-serif', padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>í»’ ECommerce Store</h1>
+      <h1>í¿ª ECommerce Store</h1>
       <p>API Status: <strong>{status}</strong></p>
       <h2>Products</h2>
       {products.length === 0 ? (
