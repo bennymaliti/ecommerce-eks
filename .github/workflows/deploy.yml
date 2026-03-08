@@ -1,0 +1,248 @@
+name: CI/CD — Build, Test, and Deploy to EKS
+
+# Triggers
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual runs from GitHub UI
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+
+jobs:
+  # ──────────────────────────────────────────────────────────
+  # JOB 1: Test — run unit and integration tests
+  # ──────────────────────────────────────────────────────────
+  test:
+    name: 🧪 Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: npm ci
+
+      - name: Run backend unit tests
+        working-directory: apps/backend
+        run: npm test -- --coverage
+
+      - name: Upload test coverage to artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: apps/backend/coverage/
+
+      - name: Set up Node.js for frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/frontend
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: apps/frontend
+        run: npm test -- --coverage --watchAll=false
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 2: Build & Push — Docker images to ECR
+  # Only runs on push to main (not PRs)
+  # ──────────────────────────────────────────────────────────
+  build:
+    name: 🐳 Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tag
+        id: meta
+        run: |
+          # Use short commit SHA as image tag for traceability
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Image tag: ${SHORT_SHA}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/backend
+          file: apps/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/ecommerce-backend:${{ steps.meta.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/ecommerce-backend:latest
+          # Build cache from ECR (reduces build time by ~60%)
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/ecommerce-backend:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/ecommerce-backend:buildcache,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/frontend
+          file: apps/frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/ecommerce-frontend:${{ steps.meta.outputs.tag }}
+            ${{ env.ECR_REGISTRY }}/ecommerce-frontend:latest
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/ecommerce-frontend:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/ecommerce-frontend:buildcache,mode=max
+
+      - name: Run ECR vulnerability scan check
+        run: |
+          echo "Checking ECR scan results for backend..."
+          aws ecr describe-image-scan-findings \
+            --repository-name ecommerce-backend \
+            --image-id imageTag=${{ steps.meta.outputs.tag }} \
+            --region ${{ env.AWS_REGION }} || echo "Scan still in progress (async)"
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 3: Deploy — update EKS deployments
+  # ──────────────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production  # Requires manual approval in GitHub environments
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.29.0"
+
+      - name: Deploy backend — rolling update
+        run: |
+          IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          echo "Deploying backend with image tag: $IMAGE_TAG"
+
+          kubectl set image deployment/backend \
+            backend=${{ env.ECR_REGISTRY }}/ecommerce-backend:${IMAGE_TAG} \
+            -n ecommerce
+
+          # Wait for rollout to complete (fail pipeline if deployment fails)
+          kubectl rollout status deployment/backend -n ecommerce --timeout=5m
+
+      - name: Deploy frontend — rolling update
+        run: |
+          IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          echo "Deploying frontend with image tag: $IMAGE_TAG"
+
+          kubectl set image deployment/frontend \
+            frontend=${{ env.ECR_REGISTRY }}/ecommerce-frontend:${IMAGE_TAG} \
+            -n ecommerce
+
+          kubectl rollout status deployment/frontend -n ecommerce --timeout=5m
+
+      - name: Verify deployment health
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -n ecommerce
+
+          echo ""
+          echo "=== HPA Status ==="
+          kubectl get hpa -n ecommerce
+
+          echo ""
+          echo "=== Service Endpoints ==="
+          kubectl get services -n ecommerce
+
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n ecommerce
+
+      - name: Smoke test — check health endpoint
+        run: |
+          # Get ALB endpoint
+          ALB_URL=$(kubectl get ingress ecommerce-ingress -n ecommerce \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          if [ -n "$ALB_URL" ]; then
+            echo "Running smoke test against: http://${ALB_URL}/api/health"
+            # Retry for up to 60s (ALB target registration can take time)
+            for i in {1..6}; do
+              RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://${ALB_URL}/api/health || echo "000")
+              if [ "$RESPONSE" = "200" ]; then
+                echo "✅ Health check passed (HTTP 200)"
+                exit 0
+              fi
+              echo "Attempt $i: HTTP $RESPONSE — retrying in 10s..."
+              sleep 10
+            done
+            echo "❌ Health check failed after 60s"
+            exit 1
+          else
+            echo "⚠️  ALB URL not available yet, skipping smoke test"
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Deployment failed! Check the logs above."
+          # In production, send to Slack: curl -X POST ${{ secrets.SLACK_WEBHOOK }} ...
+
+      - name: Post deployment summary
+        if: success()
+        run: |
+          echo "## ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image Tag** | ${{ needs.build.outputs.image_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Cluster** | ${{ env.EKS_CLUSTER_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Deployed by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY

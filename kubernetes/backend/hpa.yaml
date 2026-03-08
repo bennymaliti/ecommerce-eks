@@ -1,0 +1,51 @@
+# Horizontal Pod Autoscaler — scales backend pods based on CPU and Memory
+# Requires: metrics-server installed in kube-system
+# Install: helm install metrics-server metrics-server/metrics-server -n kube-system
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: ecommerce
+  labels:
+    app: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+
+  # Pod count boundaries
+  minReplicas: 2    # Always keep 2 pods for HA (one per AZ)
+  maxReplicas: 10   # Cost cap — review if sustained at max
+
+  metrics:
+    # Scale out when average CPU across all pods exceeds 70%
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale out when average memory across all pods exceeds 80%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60     # Wait 60s before scaling up again
+      policies:
+        - type: Pods
+          value: 2                        # Add at most 2 pods at a time
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300    # Wait 5 minutes before scaling down (avoids thrashing)
+      policies:
+        - type: Pods
+          value: 1                        # Remove at most 1 pod at a time
+          periodSeconds: 60

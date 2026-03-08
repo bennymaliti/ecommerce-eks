@@ -1,0 +1,168 @@
+# kube-prometheus-stack Helm values
+# Install: helm install monitoring prometheus-community/kube-prometheus-stack \
+#   -n monitoring --create-namespace -f monitoring/prometheus/values.yaml
+
+# ── Prometheus ────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    # Retention: 15 days of metrics (reduce if storage is a concern)
+    retention: 15d
+    retentionSize: "10GB"
+
+    # Storage: 50GB EBS volume for Prometheus data
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+    # Additional scrape configs — scrape our backend pods
+    additionalScrapeConfigs:
+      - job_name: "ecommerce-backend"
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ["ecommerce"]
+        relabel_configs:
+          # Only scrape pods with prometheus.io/scrape: "true" annotation
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+    # Alert rules for the application
+    additionalAlertManagerConfigs: []
+
+  # Alerting rules
+  additionalPrometheusRulesMap:
+    ecommerce-rules:
+      groups:
+        - name: ecommerce.backend
+          rules:
+            - alert: BackendHighErrorRate
+              expr: |
+                rate(http_requests_total{status_code=~"5.."}[5m])
+                / rate(http_requests_total[5m]) > 0.05
+              for: 2m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Backend error rate > 5%"
+                description: "Backend is returning errors for more than 5% of requests"
+
+            - alert: BackendHighLatency
+              expr: |
+                histogram_quantile(0.95,
+                  rate(http_request_duration_seconds_bucket[5m])
+                ) > 1
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Backend p95 latency > 1 second"
+
+            - alert: BackendPodCount
+              expr: kube_deployment_status_replicas_available{deployment="backend", namespace="ecommerce"} < 2
+              for: 1m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Less than 2 backend pods available"
+
+            - alert: RedisCacheMissRateHigh
+              expr: |
+                rate(redis_cache_misses_total[5m])
+                / (rate(redis_cache_hits_total[5m]) + rate(redis_cache_misses_total[5m])) > 0.5
+              for: 10m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Redis cache miss rate > 50%"
+
+# ── Grafana ───────────────────────────────────────────────
+grafana:
+  enabled: true
+
+  adminPassword: "ChangeMe123!"   # Change in production, or use a secret
+
+  persistence:
+    enabled: true
+    storageClassName: gp2
+    size: 5Gi
+
+  # Pre-load community dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: "default"
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+  dashboards:
+    default:
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+      node-exporter:
+        gnetId: 1860
+        revision: 37
+        datasource: Prometheus
+      kubernetes-pods:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana"
+    auth.anonymous:
+      enabled: false
+    security:
+      admin_user: admin
+      allow_embedding: true
+
+# ── Alertmanager ──────────────────────────────────────────
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+# ── Node Exporter (host-level metrics) ───────────────────
+nodeExporter:
+  enabled: true
+
+# ── kube-state-metrics (K8s object metrics) ──────────────
+kubeStateMetrics:
+  enabled: true
