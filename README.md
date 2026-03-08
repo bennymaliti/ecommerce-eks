@@ -48,6 +48,8 @@ A production-grade, highly available multi-tier e-commerce platform running on A
   VPC: 3 Public Subnets + 3 Private Subnets across 3 AZs (us-east-1a/b/c)
 ```
 
+### Visual Architecture Diagram
+
 ### Component Summary
 
 | Layer | Technology | Purpose |
