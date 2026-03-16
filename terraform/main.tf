@@ -61,3 +61,37 @@ data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {
   state = "available"
 }
+# ── Security Group Rules (manual fixes made permanent) ────────────────────────
+
+# Allow ALB to reach frontend pods (port 8080) on cluster SG
+resource "aws_security_group_rule" "cluster_sg_allow_alb_frontend" {
+  type                     = "ingress"
+  from_port                = 8080
+  to_port                  = 8080
+  protocol                 = "tcp"
+  security_group_id        = "sg-0598632e54e139ea6"
+  source_security_group_id = aws_security_group.alb.id
+  description              = "Allow ALB to reach frontend pods"
+}
+
+# Allow ALB to reach backend pods (port 3000) on cluster SG
+resource "aws_security_group_rule" "cluster_sg_allow_alb_backend" {
+  type                     = "ingress"
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  security_group_id        = "sg-0598632e54e139ea6"
+  source_security_group_id = aws_security_group.alb.id
+  description              = "Allow ALB to reach backend pods"
+}
+
+# Allow EKS cluster SG to reach RDS
+resource "aws_security_group_rule" "rds_allow_cluster_sg" {
+  type                     = "ingress"
+  from_port                = 3306
+  to_port                  = 3306
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = "sg-0598632e54e139ea6"
+  description              = "Allow EKS cluster SG to reach RDS"
+}
