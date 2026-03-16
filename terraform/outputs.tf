@@ -113,3 +113,11 @@ output "ecr_login_command" {
   description = "Run this command to authenticate Docker with ECR"
   value       = "aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
 }
+
+output "site_url" {
+  value = "https://${var.subdomain}"
+}
+
+output "acm_certificate_arn" {
+  value = aws_acm_certificate.main.arn
+}

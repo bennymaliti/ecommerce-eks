@@ -126,3 +126,16 @@ variable "alert_email" {
   description = "Email address for CloudWatch alarm notifications"
   type        = string
 }
+
+# ── DNS / HTTPS ───────────────────────────────────────────
+variable "root_domain" {
+  description = "Root domain already registered in Route53"
+  type        = string
+  default     = "bennymaliti.co.uk"
+}
+
+variable "subdomain" {
+  description = "Full subdomain for this project"
+  type        = string
+  default     = "store.bennymaliti.co.uk"
+}
