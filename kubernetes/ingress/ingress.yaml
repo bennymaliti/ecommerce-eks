@@ -17,15 +17,16 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
 
     # Subnet selection — ALB goes in public subnets (tagged kubernetes.io/role/elb=1)
-    alb.ingress.kubernetes.io/subnets: subnet-0cc175ee6f9ddf4bd,subnet-0a0c8da4c742e333d,subnet-0a50d48404b0673ea  # Replace with public subnet IDs from terraform output
+    alb.ingress.kubernetes.io/subnets: subnet-0250bd26108d4a643,subnet-0b267f210ee966a51,subnet-06292aaec7b31a695  # Replace with public subnet IDs from terraform output
 
     # Security group for the ALB (allows HTTP/HTTPS from internet)
-    alb.ingress.kubernetes.io/security-groups: sg-0461437f8302930db  # Replace with ALB SG from terraform output
+    alb.ingress.kubernetes.io/security-groups: sg-0bb52aebe1ca7098f  # Replace with ALB SG from terraform output
 
     # Enable HTTP→HTTPS redirect (uncomment when SSL cert is set up)
-    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-    # alb.ingress.kubernetes.io/ssl-redirect: '443'
-    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT:certificate/XXXX
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-2:919399847940:certificate/1ba615a2-024c-440c-a62b-1038f3c61012
 
     # Health check configuration
     alb.ingress.kubernetes.io/healthcheck-path: /health
@@ -49,7 +50,8 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - http:
+    - host: store.bennymaliti.co.uk
+      http:
         paths:
           # API routes — all /api/* requests go to backend
           - path: /api
